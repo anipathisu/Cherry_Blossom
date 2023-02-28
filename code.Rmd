@@ -1,0 +1,422 @@
+---
+title: "R Code for Cherry Blossom Prediction"
+author: "Aniruddha Pathak, Kunal Das, Subrata Pal"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+# install.packages("forecast")
+# install.packages("car")
+# install.packages("filling")
+# install.packages("reshape2")
+
+library("forecast")
+library("car")
+library("filling")
+library("reshape2")
+```
+
+
+
+```{r, include=FALSE}
+############################################
+## R Code for Washington DC and Vancouver ##
+############################################
+
+
+
+dc <- read.csv("data/washingtondc.csv")
+
+plot(dc$year, dc$bloom_doy, type="l")
+
+acf(dc$bloom_doy)
+pacf(dc$bloom_doy)
+
+data_wash <- data.frame( read.csv("data/data_wash.csv") )
+q <- 10
+
+y_init <- ts(dc$bloom_doy[dc$year>=1933], start=1933)
+
+ymat <- matrix(0,length(y_init)-q,q+1)
+for(i in 1:nrow(ymat))
+{
+  ymat[i,] <- y_init[(i+q):i]
+}
+
+y <- ymat[,1]
+ymat <- ymat[,-1]
+
+X.init <- data_wash[ (data_wash$year >= 1943)&(data_wash$year <= 2022), -1]
+X <- X.init[,colSums(abs(X.init))>2]
+
+dc.df <- data.frame(y,ymat,X)
+
+model_lm <- lm(y ~ ., data=dc.df)
+summary(model_lm)
+sort( car::vif(model_lm) )
+
+model_tlm <- lm( log( y/(365-y) ) ~  . , data=dc.df )
+summary(model_tlm)
+
+model_glm <- glm(y/365 ~  ., data=dc.df, family = quasi(variance = "mu(1-mu)", link = "logit"))
+summary(model_glm)
+y.fitted.glm <- floor( model_glm$fitted.values*365 )
+plot(y, y.fitted.glm)
+cor(y.fitted.glm, y)^2
+
+X.dc <- X
+X.dc.model <- apply(X.dc, c(2), auto.arima)
+pred.X.dc.model <- lapply(X.dc.model, function(x) forecast(x, 10)$mean)
+pred.X.dc.values <- as.matrix(data.frame(pred.X.dc.model))
+
+wash_X_2023 <- as.matrix( data_wash[nrow(data_wash),-1] )
+wash_X_2023 <- wash_X_2023[,colSums(abs(X.init))>2]
+wash_X_2023_NA_rm <- wash_X_2023[!is.na(wash_X_2023)]
+
+
+pred.X.dc.values[1,!is.na(wash_X_2023)] <- wash_X_2023_NA_rm
+
+pred <- c()
+for(i in 0:9)
+{
+  dum <- append( tail(y,q-i), pred )
+  names(dum) <- paste("X",1:10,sep="")
+  
+  tmp <- floor(predict(model_glm, data.frame(t(c(dum,pred.X.dc.values[i+1,]))), type="response")*365) 
+  
+  pred <- append(pred, tmp)
+}
+
+names(pred) <- 2023:2032
+wash.pred <- pred
+
+
+
+
+vanc <- read.csv("data/vancouver.csv")
+d.vanc <- read.csv("data/data_vanc.csv")
+
+X.vanc.init <- as.matrix(d.vanc[,-1])
+rownames(X.vanc.init) <- d.vanc[,1] 
+X.vanc <- data.frame( fill.nuclear(X.vanc.init)$X)
+colnames(X.vanc) <- colnames(X.vanc.init)
+rownames(X.vanc) <- rownames(X.vanc.init)
+
+dc.model.for.vanc1 <- glm(y/365 ~  T_prev_May+T_prev_Jun+T_prev_Jul+T_prev_Aug+T_prev_Sep+T_prev_Oct+T_prev_Nov+T_prev_Dec+T_Jan+T_Feb+T_Mar+T_Apr+P_prev_May+P_prev_Jun+P_prev_Jul+P_prev_Aug+P_prev_Sep+P_prev_Oct+P_prev_Nov+P_prev_Dec+P_Jan+P_Feb+P_Mar+P_Apr,
+                          data=dc.df, family = quasi(variance = "mu(1-mu)", link = "logit"))
+
+
+dc.model.for.vanc2 <- glm(y/365 ~  T_prev_May+T_prev_Jun+T_prev_Jul+T_prev_Aug+T_prev_Sep+T_prev_Oct+T_prev_Nov+T_Feb+T_Mar+T_Apr+P_prev_May+P_prev_Jun+P_prev_Jul+P_prev_Aug+P_prev_Sep+P_prev_Oct+P_prev_Nov+P_Feb+P_Mar+P_Apr,
+                          data=dc.df, family = quasi(variance = "mu(1-mu)", link = "logit"))
+
+( floor( predict(dc.model.for.vanc1, data.frame(X.vanc[nrow(X.vanc),]),type="response")*365 ) )
+( floor( predict(dc.model.for.vanc2, data.frame(X.vanc[nrow(X.vanc),]),type="response")*365 ) )
+
+X.vanc <- d.vanc
+X.vanc.model <- apply(X.vanc, c(2), auto.arima)
+pred.X.vanc.model <- lapply(X.vanc.model, function(x) forecast(x, 10)$mean)
+pred.X.vanc.values <- as.matrix(data.frame(pred.X.vanc.model))
+
+( pred <- floor( predict(dc.model.for.vanc1, data.frame(pred.X.vanc.values),type="response")*365 ) )
+
+# pred <- c()
+# for(i in 0:9)
+# {
+#   dum <- append( tail(y,q-i), pred )
+#   names(dum) <- paste("X",1:10,sep="")
+#   
+#   tmp <- floor(predict(model_glm, data.frame(t(c(dum,pred.X.dc.values[i+1,]))), type="response")*365) 
+#   
+#   pred <- append(pred, tmp)
+# }
+
+vanc.pred <- pred
+
+
+rm(list = setdiff(ls(), c("wash.pred", "vanc.pred")) )
+```
+
+
+```{r, include=FALSE}
+#########################
+###  R Code for Kyoto ###
+#########################
+
+kyoto <- read.csv("data/kyoto.csv") 
+
+y <- ts(kyoto$bloom_doy, end=2022) 
+
+lm(y/(365+y) ~ kyoto$year) 
+
+plot(kyoto$year, kyoto$bloom_doy, type="l") 
+
+acf(kyoto$bloom_doy) 
+
+pacf(kyoto$bloom_doy) 
+
+data_kyoto <- as.data.frame(read.csv("data/data_kyoto.csv")) 
+
+q <- 10 
+
+y_init <- kyoto$bloom_doy[c(which(kyoto$year == 1952):nrow(kyoto))][-c(54)]
+ ## since 2005 is missing in the NOAA data and in the 54th row of original from github
+
+ymat <- matrix(0, length(y_init)-q,q+1) 
+
+for(i in 1:nrow(ymat)) { 
+  
+  ymat[i,] <- y_init[(i+q):i] 
+  
+} 
+
+y <- ymat[ , 1] 
+
+ymat <- ymat[ , -c(1)] 
+
+X1 <- data_kyoto[ , -c(1)] 
+
+X2 <- X1[-c(1:(q), nrow(X1)), ] 
+
+X <- X2[ , colSums(abs(X2), na.rm = T)>0.5] 
+
+d <- data.frame(y, ymat, X) 
+old_colnames <- colnames(d)
+
+
+d <- as.data.frame(filling::fill.nuclear(as.matrix(d))$X)
+colnames(d) <- old_colnames
+d$y <- y
+
+
+model_lm <- lm(y~.,data=d) 
+
+summary(model_lm) 
+
+# Residual standard error: 1.38 on 4 degrees of freedom
+# (21 observations deleted due to missingness)
+# Multiple R-squared:  0.9912,	Adjusted R-squared:  0.9162 
+# F-statistic: 13.22 on 34 and 4 DF,  p-value: 0.01084
+
+sort( car::vif(model_lm) ) 
+
+model_lm2 <- lm(y~ . - X2,data=d) 
+
+sort( car::vif(model_lm2) ) 
+
+
+
+model_lm3 <- lm(y~ . - X2 - T_prev_Oct,data=d) 
+
+sort( car::vif(model_lm3) ) 
+
+
+
+model_lm4 <- lm(y~ . - X2 - T_prev_Oct - T_prev_May - 
+                       P_prev_Jun - T_prev_Aug - P_prev_Aug - P_prev_Dec, data=d) 
+
+sort( car::vif(model_lm4) ) 
+
+summary(model_lm4)
+
+# Residual standard error: 1.6 on 11 degrees of freedom
+# (21 observations deleted due to missingness)
+# Multiple R-squared:  0.9674,	Adjusted R-squared:  0.8874 
+# F-statistic:  12.1 on 27 and 11 DF,  p-value: 6.087e-05
+
+model_tlm <- lm( log( y/(365-y) ) ~  . - X2 - T_prev_Oct - T_prev_May - 
+                   P_prev_Jun - T_prev_Aug - P_prev_Aug - P_prev_Dec, data=d ) 
+
+summary(model_tlm) 
+
+
+
+model <- glm(y/365 ~  . - X2 - T_prev_Oct - T_prev_May - 
+               P_prev_Jun - T_prev_Aug - P_prev_Aug - P_prev_Dec, data=d,
+             family = quasi(variance = "mu(1-mu)", link = "logit")) 
+
+summary(model) 
+
+ypred <- floor( model$fitted.values*365 ) 
+
+plot(y,ypred) 
+
+cor(ypred,y)^2 
+
+var(ypred)/var(y) 
+
+
+
+model_p <- glm(y ~ ., data=d, family = poisson(link = "log")) 
+
+summary(model_p) 
+
+
+
+ypred_p <- model_p$fitted.values 
+
+
+
+plot(y,ypred_p-y) 
+
+
+
+cor(ypred_p,y)^2 
+
+var(ypred_p)/var(y) 
+
+
+
+predict(model_lm, se.fit = T, type = "response") 
+
+predict(model_lm, se.fit = T, type = "response") 
+
+library(forecast) 
+
+# X.dc <- X2 
+# 
+# X.dc.model <- apply(X.dc, c(2), auto.arima) 
+# pred.X.dc.model <- lapply(X.dc.model, function(x) forecast(x,10)$mean) 
+# pred.X.dc.values <- data.frame(pred.X.dc.model) 
+
+X.dc <- X
+X.dc.model <- apply(X.dc, c(2), auto.arima)
+pred.X.dc.model <- lapply(X.dc.model, function(x) forecast(x, 10)$mean)
+pred.X.dc.values <- as.matrix(data.frame(pred.X.dc.model))
+kyoto_X_2023 <- as.matrix(data_kyoto[nrow(data_kyoto),-1] )
+kyoto_X_2023 <- kyoto_X_2023[ , colSums(abs(X)) > 2]
+kyoto_X_2023_NA_rm <- kyoto_X_2023[!is.na(kyoto_X_2023)]
+
+pred.X.dc.values[1,!is.na(kyoto_X_2023)] <- kyoto_X_2023_NA_rm
+
+pred <- c()
+for(i in 0:9)
+{
+  dum <- append( tail(y,q-i), pred )
+  names(dum) <- paste("X",1:10,sep="")
+  
+  tmp <- floor(predict(model, data.frame(t(c(dum,pred.X.dc.values[i+1,]))), 
+                       type = "response") * 365) 
+  
+  pred <- append(pred, tmp)
+}
+
+kyoto.pred <- pred
+
+
+rm(list = setdiff(ls(), c("wash.pred", "vanc.pred", "kyoto.pred")) )
+
+```
+
+
+```{r, include=FALSE}
+#####################################
+#### R Code for Liestal-Weideli  ####
+#####################################
+
+
+liestal <- read.csv("data/liestal.csv")
+y.liestal <- ts(liestal$bloom_doy[liestal$year>=1951],end="2022")
+
+swiss <- read.csv("data/meteoswiss.csv")
+X.swiss <- acast(swiss, year~location, value.var="bloom_doy")
+
+dum <- fill.nuclear(X.swiss)
+colnames(dum$X) <- colnames(X.swiss)
+# std.dum <- scale(dum$X)
+
+
+
+## Predict future covariates
+arima_models <- apply(dum$X, 2, auto.arima)
+pred_vals <- data.frame(lapply(arima_models, function(x){predict(x, 10, se.fit=F)}))
+colnames(dum$X) <- colnames(pred_vals)
+
+
+## Do PCA
+pca.dum <- prcomp( dum$X, center = TRUE, scale. = TRUE )
+predicted_PCs <- predict(pca.dum, pred_vals)
+
+plot( pca.dum$sdev**2 )
+
+summary(pca.dum)
+
+## How many PCs to take???
+# df.swiss <- data.frame(y=y.liestal, pca.dum$x[,1:39])
+
+
+
+## Find the best number of PCs:
+Adjusted_Rsq_vals <- rep(0, 50)
+for(i in 1:50){
+  lm.model.swiss <- lm( y.liestal ~ pca.dum$x[,1:i])
+  Adjusted_Rsq_vals[i] <- summary(lm.model.swiss)[["adj.r.squared"]]
+}
+plot(Adjusted_Rsq_vals, type='l')
+(best_PC_number <- which.max(Adjusted_Rsq_vals))
+(best_PC_number <- which.max(Adjusted_Rsq_vals[1:25]))
+
+
+
+
+## Fit the value with best number of PCs (15)
+df.swiss <- data.frame(y=y.liestal, pca.dum$x[,1:best_PC_number])
+df.pred <- data.frame(predicted_PCs[,1:best_PC_number])
+
+
+lm.model.swiss <- lm( y ~ ., data=df.swiss)
+summary(lm.model.swiss)
+cor(lm.model.swiss$fitted.values,y.liestal)^2
+(lm_pred <- predict(lm.model.swiss, df.pred))
+
+
+tlm.model.swiss <- lm( log( y/(365-y) ) ~ ., data=df.swiss)
+summary(tlm.model.swiss)
+cor(tlm.model.swiss$fitted.values,y.liestal)^2
+tmp_pred <- predict(tlm.model.swiss, df.pred)
+(tlm_pred <- 365/(1+exp(-tmp_pred)))
+
+
+glm.model.swiss <- glm( y/365 ~ ., data=df.swiss, 
+                        family = quasi(variance = "mu(1-mu)", link = "logit"))
+summary(glm.model.swiss)
+cor(glm.model.swiss$fitted.values,y.liestal)^2
+(glm_pred <- predict(glm.model.swiss, df.pred, type='response')*365)
+
+
+poisson.model.swiss <- glm(y ~ ., data=df.swiss, family = poisson(link = "log"))
+summary(poisson.model.swiss)
+cor(poisson.model.swiss$fitted.values,y.liestal)^2
+(poisson_pred <- predict(poisson.model.swiss, df.pred, type='response'))
+
+liestal.pred <- round(glm_pred)
+# saveRDS(cbind(lm_pred, tlm_pred, glm_pred, poisson_pred), "liestal_pred.rds")
+
+
+
+rm(list = setdiff(ls(), c("wash.pred", "vanc.pred", "kyoto.pred", "liestal.pred")) )
+```
+
+
+The predicted values are as follows:
+```{r, echo=FALSE}
+######################
+#### Final Values ####
+######################
+
+year <- 2023:2032
+final_pred <- data.frame(year = year, kyoto = kyoto.pred, 
+                         liestal = liestal.pred, washingtondc = wash.pred ,
+                         vancouver = vanc.pred)
+print(final_pred)
+write.csv(final_pred, "prediction.csv", row.names = FALSE)
+
+```
+
+
+
+
+
